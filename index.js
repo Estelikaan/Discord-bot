@@ -17,21 +17,38 @@ const client = new Client({
   ]
 });
 
+// Sabit kalmasını istediğin kanal ve sunucu ID'leri
+const SAVED_CHANNEL_ID = '1505636936163922080';
+const SAVED_GUILD_ID = '1390813111195537509';
+
+// Sese bağlanma fonksiyonu
+function connectToVoice(guild) {
+  joinVoiceChannel({
+    channelId: SAVED_CHANNEL_ID,
+    guildId: SAVED_GUILD_ID,
+    adapterCreator: guild.voiceAdapterCreator,
+    selfMute: true,
+    selfDeaf: true
+  });
+}
+
 client.on('ready', () => {
   console.log(`${client.user.tag} aktif ve sese bağlanmaya hazır!`);
-  
-  // Discord'da sağ tıklayıp aldığın ID'leri buraya yazacaksın
-  const channelId = '1505636936163922080';
-  const guildId = '1390813111195537509';
-
-  const guild = client.guilds.cache.get(guildId);
+  const guild = client.guilds.cache.get(SAVED_GUILD_ID);
   if (guild) {
-    joinVoiceChannel({
-      channelId: channelId,
-      guildId: guildId,
-      adapterCreator: guild.voiceAdapterCreator,
-    });
-    console.log("Ses kanalına başarıyla giriş yapıldı.");
+    connectToVoice(guild);
+    console.log("Ses kanalına giriş yapıldı.");
+  }
+});
+
+// KORUMA SATIRI: Bot başka kanala taşınırsa anında eski yerine geri döner
+client.on('voiceStateUpdate', (oldState, newState) => {
+  if (newState.id === client.user.id) {
+    // Eğer bot hedef kanaldan farklı bir kanala taşındıysa veya çıkarıldıysa
+    if (newState.channelId !== SAVED_CHANNEL_ID) {
+      console.log("Bot başka kanala taşındı! Eski kanalına geri döndürülüyor...");
+      connectToVoice(newState.guild);
+    }
   }
 });
 
