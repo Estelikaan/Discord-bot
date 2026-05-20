@@ -1,11 +1,11 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
-const play = require('play-dl');
+const ytdl = require('@distube/ytdl-core');
 const http = require('http');
 
-// Web sunucusu başlığı sadeleştirildi
+// 7/24 Aktif Kalma Sunucusu
 http.createServer((req, res) => {
-  res.write("Müzik Sistemi 7/24 Aktif!");
+  res.write("Muzik Sistemi Aktif!");
   res.end();
 }).listen(process.env.PORT || 3000);
 
@@ -23,9 +23,7 @@ const SAVED_GUILD_ID = '1390813111195537509';
 
 const queue = new Map();
 const player = createAudioPlayer({
-  behaviors: {
-    noSubscriber: NoSubscriberBehavior.Play
-  }
+  behaviors: { noSubscriber: NoSubscriberBehavior.Play }
 });
 
 function connectToVoice(guild) {
@@ -40,20 +38,24 @@ function connectToVoice(guild) {
   return connection;
 }
 
-// Komut açıklamalarındaki tüm reklam ve premium yazıları kaldırıldı
+// İstediğin Tüm Özellikler Geri Eklendi (Sade ve Özgün Açıklamalarla)
 const commands = [
-  new SlashCommandBuilder().setName('play').setDescription('İstediğiniz şarkıyı aratır ve çalar.').addStringOption(opt => opt.setName('şarkı').setDescription('Şarkı adı veya YouTube linki').setRequired(true)),
+  new SlashCommandBuilder().setName('play').setDescription('Şarkı aratır ve listeden oynatır.').addStringOption(opt => opt.setName('şarkı').setDescription('Şarkı adı veya YouTube linki').setRequired(true)),
   new SlashCommandBuilder().setName('skip').setDescription('Sıradaki şarkıya geçer.'),
-  new SlashCommandBuilder().setName('stop').setDescription('Müziği durdurur ve sırayı temizler.'),
-  new SlashCommandBuilder().setName('queue').setDescription('Şarkı kuyruğunu gösterir.')
+  new SlashCommandBuilder().setName('stop').setDescription('Müziği tamamen durdurur ve sırayı temizler.'),
+  new SlashCommandBuilder().setName('pause').setDescription('Şarkıyı geçici olarak duraklatır.'),
+  new SlashCommandBuilder().setName('resume').setDescription('Duraklatılan şarkıyı devam ettirir.'),
+  new SlashCommandBuilder().setName('queue').setDescription('Şarkı kuyruğunu listeler.'),
+  new SlashCommandBuilder().setName('loop').setDescription('Tekrar modunu değiştirir.').addStringOption(opt => opt.setName('mod').setDescription('Tekrar modu').setRequired(true).addChoices({name:'Kapalı',value:'off'},{name:'Şarkı',value:'song'},{name:'Kuyruk',value:'queue'}))
 ].map(c => c.toJSON());
 
 client.on('ready', async () => {
-  console.log(`${client.user.tag} hazır ve aktif!`);
+  console.log(`${client.user.tag} müzik sistemi aktif!`);
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
   try {
+    // Eski "Bilinmeyen Entegrasyon" komut hatalarını temizlemek için sıfırdan kaydeder
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-    console.log('Komutlar başarıyla yüklendi.');
+    console.log('Komutlar başarıyla güncellendi.');
   } catch (e) { console.error(e); }
 
   const guild = client.guilds.cache.get(SAVED_GUILD_ID);
@@ -66,24 +68,28 @@ client.on('voiceStateUpdate', (o, n) => {
   }
 });
 
+// Yeni ve Kararlı Şarkı Çalma Altyapısı
 async function playSong(guildId, song) {
   const serverQueue = queue.get(guildId);
   if (!song) return;
 
   try {
-    const stream = await play.stream(song.url, { 
-      quality: 0,
-      discordPlayerCompatibility: true 
+    // ytdl-core ile doğrudan yüksek performanslı ses akışı çekiyoruz
+    const stream = ytdl(song.url, {
+      filter: 'audioonly',
+      highWaterMark: 1 << 25, // Render'da donmaları engellemek için arabellek ayarı
+      quality: 'highestaudio'
     });
-    
-    const resource = createAudioResource(stream.stream, { inputType: stream.type });
+
+    const resource = createAudioResource(stream);
     player.play(resource);
 
-    // Embed mesajı tamamen özgün ve sade hale getirildi
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
       .setTitle('🎵 Şimdi Oynatılıyor')
-      .setDescription(`[${song.title}](${song.url})`);
+      .setDescription(`**${song.title}**`)
+      .addFields({ name: '🔁 Döngü', value: serverQueue.loop.toUpperCase(), inline: true });
+    
     serverQueue.textChannel?.send({ embeds: [embed] });
   } catch (err) {
     console.error(err);
@@ -94,9 +100,17 @@ async function playSong(guildId, song) {
 
 player.on(AudioPlayerStatus.Idle, () => {
   for (const [guildId, serverQueue] of queue.entries()) {
-    serverQueue.songs.shift();
-    if (serverQueue.songs.length > 0) {
+    if (serverQueue.loop === 'song') {
       playSong(guildId, serverQueue.songs[0]);
+    } else if (serverQueue.loop === 'queue') {
+      const removed = serverQueue.songs.shift();
+      serverQueue.songs.push(removed);
+      playSong(guildId, serverQueue.songs[0]);
+    } else {
+      serverQueue.songs.shift();
+      if (serverQueue.songs.length > 0) {
+        playSong(guildId, serverQueue.songs[0]);
+      }
     }
   }
 });
@@ -107,7 +121,7 @@ client.on('interactionCreate', async interaction => {
   
   let serverQueue = queue.get(guildId);
   if (!serverQueue) {
-    serverQueue = { textChannel: interaction.channel, songs: [] };
+    serverQueue = { textChannel: interaction.channel, songs: [], loop: 'off' };
     queue.set(guildId, serverQueue);
   }
 
@@ -116,43 +130,67 @@ client.on('interactionCreate', async interaction => {
     const query = interaction.options.getString('şarkı');
 
     try {
-      const yt_info = await play.search(query, { limit: 1 });
-      if (!yt_info || yt_info.length === 0) return interaction.editReply('❌ İstediğiniz şarkı bulunamadı.');
+      // YouTube araması ve link doğrulama altyapısı
+      let videoUrl = query;
+      if (!ytdl.validateURL(query)) {
+        const searchResults = await ytdl.getInfo(`ytsearch:${query}`);
+        if (!searchResults || !searchResults.related_videos.length) {
+          return interaction.editReply('❌ Aradığınız şarkı bulunamadı.');
+        }
+        videoUrl = searchResults.videoDetails.video_url || searchResults.related_videos[0].id;
+      }
 
-      const song = { title: yt_info[0].title, url: yt_info[0].url };
+      const info = await ytdl.getBasicInfo(videoUrl);
+      const song = { title: info.videoDetails.title, url: info.videoDetails.video_url };
+      
       serverQueue.songs.push(song);
 
       if (serverQueue.songs.length === 1) {
         const guild = client.guilds.cache.get(SAVED_GUILD_ID);
         if (guild) connectToVoice(guild);
         await playSong(guildId, song);
-        return interaction.editReply(`🚀 **${song.title}** açılıyor...`);
+        return interaction.editReply(`🚀 **${song.title}** oynatılıyor.`);
       } else {
-        return interaction.editReply(`➕ **${song.title}** sıraya eklendi.`);
+        return interaction.editReply(`➕ **${song.title}** kuyruğa eklendi. (Sıra: ${serverQueue.songs.length - 1})`);
       }
     } catch (error) {
       console.error(error);
-      return interaction.editReply('⚠️ Bir hata oluştu, lütfen tekrar deneyin.');
+      return interaction.editReply('⚠️ Şarkı başlatılırken hata oluştu. Lütfen tekrar deneyin.');
     }
   }
 
   if (commandName === 'skip') {
     player.stop();
-    return interaction.reply('⏭️ Şarkı geçildi.');
+    return interaction.reply('⏭️ Sıradaki şarkıya geçildi.');
   }
 
   if (commandName === 'stop') {
     serverQueue.songs = [];
     player.stop();
-    return interaction.reply('⏹️ Müzik durduruldu.');
+    return interaction.reply('⏹️ Müzik durduruldu ve kuyruk sıfırlandı.');
+  }
+
+  if (commandName === 'pause') {
+    player.pause();
+    return interaction.reply('⏸️ Müzik geçici olarak duraklatıldı.');
+  }
+
+  if (commandName === 'resume') {
+    player.unpause();
+    return interaction.reply('▶️ Müzik devam ettiriliyor.');
+  }
+
+  if (commandName === 'loop') {
+    const mode = interaction.options.getString('mod');
+    serverQueue.loop = mode;
+    return interaction.reply(`🔁 Döngü modu **${mode.toUpperCase()}** olarak ayarlandı.`);
   }
 
   if (commandName === 'queue') {
-    if (serverQueue.songs.length === 0) return interaction.reply('📜 Sıra şu an boş.');
-    const list = serverQueue.songs.map((s, i) => `${i === 0 ? '▶️' : `${i}.`} ${s.title}`).join('\n');
-    return interaction.reply(`📜 **Oynatılacak Şarkılar:**\n${list}`);
+    if (serverQueue.songs.length === 0) return interaction.reply('📜 Kuyruk şu an boş.');
+    const list = serverQueue.songs.map((s, i) => `${i === 0 ? '▶️' : `${i}.`} ${s.title}`).slice(0, 10).join('\n');
+    return interaction.reply(`📜 **Güncel Şarkı Listesi:**\n${list}`);
   }
 });
 
-client.getLog = () => {}; // Konsol izlerini temiz tutmak için ek araç
 client.login(process.env.TOKEN);
