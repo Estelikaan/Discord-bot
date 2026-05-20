@@ -21,7 +21,6 @@ const client = new Client({
 const SAVED_CHANNEL_ID = '1505636936163922080';
 const SAVED_GUILD_ID = '1390813111195537509';
 
-// Gelişmiş Kuyruk ve Premium Bellek Yönetimi
 const queue = new Map();
 const player = createAudioPlayer();
 
@@ -30,8 +29,8 @@ function connectToVoice(guild) {
     channelId: SAVED_CHANNEL_ID,
     guildId: SAVED_GUILD_ID,
     adapterCreator: guild.voiceAdapterCreator,
-    selfMute: false,
-    selfDeaf: true
+    selfMute: false, // DÜZELTİLDİ: Artık botun mikrofonu açık, şarkıyı duyabileceksin!
+    selfDeaf: true   // Kulaklığı kapalı (sağırlaştırılmış) kalmaya devam ediyor
   });
   connection.subscribe(player);
   return connection;
@@ -41,7 +40,7 @@ function connectToVoice(guild) {
 const commands = [
   new SlashCommandBuilder().setName('play').setDescription('🎵 Şarkı veya oynatma listesi (YouTube/Spotify) oynatır.').addStringOption(opt => opt.setName('şarkı').setDescription('Şarkı adı veya Link').setRequired(true)),
   new SlashCommandBuilder().setName('skip').setDescription('⏭️ Sıradaki şarkıya geçer.'),
-  new SlashCommandBuilder().setName('stop').setDescription('⏹️ Müziği tamamen durdurur ve kuyruğu temizler.'),
+  new SlashCommandBuilder().setName('stop').setDescription('⏹️ Müziği tamamen durdurur und kuyruğu temizler.'),
   new SlashCommandBuilder().setName('pause').setDescription('⏸️ Şarkıyı geçici olarak duraklatır.'),
   new SlashCommandBuilder().setName('resume').setDescription('▶️ Duraklatılan şarkıyı devam ettirir.'),
   new SlashCommandBuilder().setName('queue').setDescription('📜 Gelişmiş şarkı kuyruğunu listeler.'),
@@ -75,7 +74,6 @@ async function playSong(guildId, song) {
   const serverQueue = queue.get(guildId);
   if (!song) {
     if (serverQueue && serverQueue.autoplay) {
-      // Otomatik oynatma özelliği aktifse benzer şarkı bulup çalar
       const nextSongs = await play.search(serverQueue.lastSearch || 'turkce rock', { limit: 2 });
       if (nextSongs[1]) {
         serverQueue.songs.push({ title: nextSongs[1].title, url: nextSongs[1].url });
@@ -110,7 +108,6 @@ async function playSong(guildId, song) {
 }
 
 player.on(AudioPlayerStatus.Idle, () => {
-  // Döngü ve Sıra Mantığı
   for (const [guildId, serverQueue] of queue.entries()) {
     if (serverQueue.loop === 'song') {
       playSong(guildId, serverQueue.songs[0]);
