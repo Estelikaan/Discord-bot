@@ -1,6 +1,6 @@
 {
-  "name": "discord-premium-music-bot",
-  "version": "2.0.0",
+  "name": "discord-music-bot",
+  "version": "2.1.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,7 +9,7 @@
     "discord.js": "^14.14.1",
     "@discordjs/voice": "^0.16.1",
     "libsodium-wrappers": "^0.7.13",
-    "play-dl": "^1.9.7",
+    "@distube/ytdl-core": "^4.15.9",
     "@discordjs/opus": "^0.9.0"
   }
 }
