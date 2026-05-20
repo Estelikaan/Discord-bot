@@ -1,15 +1,112 @@
-{
-  "name": "discord-music-bot",
-  "version": "1.1.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "@discordjs/voice": "^0.16.1",
-    "libsodium-wrappers": "^0.7.13",
-    "play-dl": "^1.9.7",
-    "@discordjs/opus": "^0.9.0"
-  }
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource } = require('@discordjs/voice');
+const play = require('play-dl');
+const http = require('http');
+
+// Render'ın uyanık kalması için web sunucusu
+http.createServer((req, res) => {
+  res.write("Müzik Botu 7/24 Aktif!");
+  res.end();
+}).listen(process.env.PORT || 3000);
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+// Sabit kalacağı kanal ve sunucu ID'leri
+const SAVED_CHANNEL_ID = '1505636936163922080';
+const SAVED_GUILD_ID = '1390813111195537509';
+
+const player = createAudioPlayer();
+
+function connectToVoice(guild) {
+  const connection = joinVoiceChannel({
+    channelId: SAVED_CHANNEL_ID,
+    guildId: SAVED_GUILD_ID,
+    adapterCreator: guild.voiceAdapterCreator,
+    selfMute: false, // Müzik çalacağı için botun sesi açık olmalı
+    selfDeaf: true   // Kulaklığı kapalı (sağırlaştırılmış)
+  });
+  connection.subscribe(player);
 }
+
+// Eğik çizgi (/) komutlarını tanımlıyoruz
+const commands = [
+  new SlashCommandBuilder()
+    .setName('play')
+    .setDescription('İstediğiniz şarkıyı YouTube üzerinden aratır ve çalar.')
+    .addStringOption(option => 
+      option.setName('şarkı').setDescription('Şarkı adı veya YouTube linki').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('skip')
+    .setDescription('Çalan şarkıyı geçer.'),
+  new SlashCommandBuilder()
+    .setName('stop')
+    .setDescription('Müziği tamamen durdurur.')
+].map(command => command.toJSON());
+
+client.on('ready', async () => {
+  console.log(`${client.user.tag} aktif ve müzik komutlarına hazır!`);
+  
+  // Slash komutlarını Discord API'sine kaydediyoruz
+  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+  try {
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log('Slash (/) komutları başarıyla Discord sunucusuna yüklendi.');
+  } catch (error) {
+    console.error(error);
+  }
+
+  const guild = client.guilds.cache.get(SAVED_GUILD_ID);
+  if (guild) connectToVoice(guild);
+});
+
+// KORUMA SATIRI: Bot kanaldan düşerse veya başka odaya taşınırsa anında ana kanalına geri döner
+client.on('voiceStateUpdate', (oldState, newState) => {
+  if (newState.id === client.user.id && newState.channelId !== SAVED_CHANNEL_ID) {
+    console.log("Bot taşındı! Ana kanalına geri döndürülüyor...");
+    connectToVoice(newState.guild);
+  }
+});
+
+// KOMUT DİNLEYİCİSİ
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+
+  if (commandName === 'play') {
+    await interaction.deferReply();
+    const query = interaction.options.getString('şarkı');
+    
+    try {
+      // YouTube üzerinde arama yapıyoruz
+      const yt_info = await play.search(query, { limit: 1 });
+      if (!yt_info || yt_info.length === 0) {
+        return interaction.editReply('Aradığınız şarkı YouTube\'da bulunamadı.');
+      }
+
+      // Sesi akış (stream) olarak alıp oynatıcıya veriyoruz
+      const stream = await play.stream(yt_info[0].url);
+      const resource = createAudioResource(stream.stream, { inputType: stream.type });
+      
+      player.play(resource);
+      await interaction.editReply(`🎵 Şimdi Çalıyor: **${yt_info[0].title}**`);
+    } catch (error) {
+      console.error(error);
+      await interaction.editReply('Şarkı açılırken teknik bir hata oluştu.');
+    }
+  }
+
+  if (commandName === 'skip' || commandName === 'stop') {
+    player.stop();
+    await interaction.reply('⏹️ Müzik durduruldu.');
+  }
+});
+
+client.login(process.env.TOKEN);
